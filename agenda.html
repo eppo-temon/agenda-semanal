@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agenda Semanal</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        /* Estilo para a célula da agenda */
+        .schedule-cell {
+            min-height: 5rem;
+        }
+        .schedule-cell.has-event {
+            background-color: #d1fae5;
+            border-left: 4px solid #10b981;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto bg-white shadow-xl rounded-lg overflow-hidden">
+        <header class="bg-indigo-600 p-6">
+            <h1 class="text-3xl font-bold text-white text-center">Agenda Semanal</h1>
+        </header>
+
+        <div id="loading" class="text-center p-8">
+            <div class="flex justify-center items-center">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+            </div>
+            <p class="mt-4 text-gray-500">Carregando agenda...</p>
+        </div>
+
+        <div id="schedule-container" class="p-4 md:p-8" style="display: none;">
+            <div id="schedule-grid" class="grid grid-cols-6 gap-2">
+                <!-- Cabeçalhos de tempo e dias serão gerados via JS -->
+            </div>
+        </div>
+
+        <div id="error-message" class="text-center p-8 text-red-500" style="display: none;">
+            <p>Não foi possível carregar a agenda. Verifique sua conexão ou a configuração do Firebase.</p>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getFirestore, collection, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+        // --- CONFIGURAÇÃO DO PROJETO FIREBASE ---
+        // Substitua os valores abaixo pelos seus, se necessário
+        const firebaseConfig = {
+            apiKey: "AIzaSyCqlSCOeAjqBQPHRBBCu-nuFLCDJftAGUs",
+            authDomain: "eppo-web-dd8de.firebaseapp.com",
+            projectId: "eppo-web-dd8de",
+            storageBucket: "eppo-web-dd8de.firebasestorage.app",
+            messagingSenderId: "426957662914",
+            appId: "1:426957662914:web:9fa52ad1eb72e470d0a95b"
+        };
+
+        // Inicializa o Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // Nomes de dias da semana e horários para a agenda
+        const daysOfWeek = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+        const hours = Array.from({ length: 11 }, (_, i) => i + 7); // Das 7h às 17h
+
+        // Mapeia os eventos do Firestore por data e hora
+        let eventsByDateTime = {};
+
+        // Adiciona um listener para o evento de carregamento da página
+        document.addEventListener('DOMContentLoaded', async () => {
+            await fetchScheduleData();
+            renderSchedule();
+        });
+
+        /**
+         * Busca os dados da semana atual no Firestore.
+         */
+        async function fetchScheduleData() {
+            try {
+                // Mostra o spinner de carregamento
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('schedule-container').style.display = 'none';
+                document.getElementById('error-message').style.display = 'none';
+
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                // Determina o primeiro e o último dia da semana (domingo a sábado)
+                const startOfWeek = new Date(today);
+                startOfWeek.setDate(today.getDate() - today.getDay() + 1); // Força a semana a começar na segunda
+                startOfWeek.setHours(0, 0, 0, 0);
+
+                const endOfWeek = new Date(startOfWeek);
+                endOfWeek.setDate(startOfWeek.getDate() + 4); // Fim da semana na sexta-feira
+                endOfWeek.setHours(23, 59, 59, 999);
+
+                // Consulta o Firestore para buscar documentos da semana atual
+                const q = query(collection(db, "Programacao"));
+                
+                const querySnapshot = await getDocs(q);
+
+                // Filtra e mapeia os documentos localmente por data e hora
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    const eventDate = new Date(data.data);
+                    eventDate.setHours(0, 0, 0, 0);
+
+                    if (eventDate >= startOfWeek && eventDate <= endOfWeek) {
+                        const dateString = eventDate.toISOString().split('T')[0];
+                        const eventHour = new Date(data.data).getHours();
+                        
+                        if (!eventsByDateTime[dateString]) {
+                            eventsByDateTime[dateString] = {};
+                        }
+                        // Armazena o texto no objeto aninhado, usando a hora como chave
+                        eventsByDateTime[dateString][eventHour] = data.texto;
+                    }
+                });
+
+                console.log("Dados do Firestore carregados com sucesso!");
+
+            } catch (error) {
+                console.error("Erro ao carregar dados do Firestore:", error);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error-message').style.display = 'block';
+            }
+        }
+
+        /**
+         * Renderiza a grade da agenda na página.
+         */
+        function renderSchedule() {
+            const gridContainer = document.getElementById('schedule-grid');
+            gridContainer.innerHTML = ''; // Limpa o conteúdo anterior
+
+            // Adiciona a célula vazia no canto superior esquerdo
+            gridContainer.innerHTML += `<div class="p-2 font-semibold"></div>`;
+
+            // Adiciona os cabeçalhos dos dias da semana
+            daysOfWeek.forEach(day => {
+                gridContainer.innerHTML += `<div class="p-2 font-bold text-center text-gray-700 bg-gray-200 rounded-md">${day}</div>`;
+            });
+
+            // Adiciona as horas e as células da agenda
+            hours.forEach(hour => {
+                // Célula de horário
+                gridContainer.innerHTML += `<div class="p-2 font-semibold text-gray-700 bg-gray-200 rounded-md text-center">${hour}h</div>`;
+
+                // Células dos dias
+                daysOfWeek.forEach((day, dayIndex) => {
+                    const today = new Date();
+                    const currentDay = new Date(today);
+                    currentDay.setDate(today.getDate() - today.getDay() + 1 + dayIndex); // Começa na segunda
+                    currentDay.setHours(0, 0, 0, 0);
+
+                    const dateString = currentDay.toISOString().split('T')[0];
+                    
+                    let cellContent = '';
+                    let cellClasses = 'schedule-cell p-3 border-b border-gray-300';
+                    
+                    // Verifica se existe um evento para esta data e hora específica
+                    const eventText = eventsByDateTime[dateString] ? eventsByDateTime[dateString][hour] : null;
+
+                    if (eventText) {
+                        cellContent = `<p class="text-sm text-gray-800">${eventText}</p>`;
+                        cellClasses += ' has-event';
+                    }
+
+                    gridContainer.innerHTML += `<div class="${cellClasses} rounded-md">${cellContent}</div>`;
+                });
+            });
+
+            // Oculta o spinner e mostra a agenda
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('schedule-container').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
